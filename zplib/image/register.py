@@ -13,7 +13,7 @@ def square_diff(i1, i2):
     '''Return the squared differences between two images.'''
     return (i1 - i2)**2
 
-def pyr_register(fixed_image, moving_image, levels=3, initial_shift=(0,0), diff_function=abs_diff, iterate=True):
+def pyr_register(fixed_image, moving_image, levels=3, initial_shift=(0,0), diff_function=abs_diff, iterate=True, return_result = False):
     '''Register two images via downsampling, computing a shift, and refining on the original images.
 
     At each downsampling ("pyramid level"), the images are shrunk two-fold. The maximum shift
@@ -44,11 +44,19 @@ def pyr_register(fixed_image, moving_image, levels=3, initial_shift=(0,0), diff_
             func = iterate_register
         else:
             func = register
-        shift = func(f, m, initial_shift=initial_shift, diff_function=diff_function)
+        
+        if return_result:
+            shift, result = func(f, m, initial_shift=initial_shift, diff_function=diff_function, return_result = return_result)
+        else:
+            shift = func(f, m, initial_shift=initial_shift, diff_function=diff_function, return_result = return_result)
+            
         initial_shift = shift * 2
-    return shift
+    if return_result:
+        return (shift, result)
+    else:
+        return shift
 
-def iterate_register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, diff_function=abs_diff, max_iters=10, tol=0.25, eps=1):
+def iterate_register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, diff_function=abs_diff, max_iters=10, tol=0.5, eps=1, return_result = False):
     '''Register two images iteratively.
 
     The 'register()' function is repeatedly applied to find the best registration
@@ -73,14 +81,20 @@ def iterate_register(fixed_image, moving_image, initial_shift=(0,0), search_boun
     '''
     cache = {}
     for i in range(max_iters):
-        shift = register(fixed_image, moving_image, initial_shift, search_bounds, diff_function, tol=0.5, eps=eps, cache=cache)
+        if return_result:
+            shift, result = register(fixed_image, moving_image, initial_shift, search_bounds, diff_function, tol=tol, eps=eps, cache=cache, return_result = return_result)
+        else:
+            shift = register(fixed_image, moving_image, initial_shift, search_bounds, diff_function, tol=tol, eps=eps, cache=cache, return_result = return_result)
         shift = numpy.round(shift, 2)
         if numpy.abs(shift - initial_shift).max() < tol:
             break
         initial_shift = shift
-    return shift
+    if return_result:
+        return (shift, result) # Note: shift and result.x could be different based on the rounding above
+    else:
+        return shift
 
-def register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, diff_function=abs_diff, tol=0.5, eps=1, cache=None):
+def register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, diff_function=abs_diff, tol=0.5, eps=1, cache=None, return_result = False):
     '''Register two images by numerical optimization.
 
     Parameters:
@@ -106,7 +120,10 @@ def register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, di
     bounds = numpy.array([-search_bounds, search_bounds]) + initial_shift
     bounds = [bounds, bounds] # one for x and one for y
     result = optimize.minimize(compare_images, initial_shift, args=args, method='TNC', options={'xtol':tol, 'eps':eps}, bounds=bounds)
-    return result.x
+    if return_result:
+        return (result.x, result)
+    else:
+        return result.x
 
 def compare_images(shift, fixed_image, moving_image, diff_function, cache=None):
     '''Return distance metric between two images after applying a shift.
