@@ -16,7 +16,7 @@ def square_diff(i1, i2):
 def sigmoid_diff(i1,i2):
     return 1/(1 + np.exp(-1*np.abs(i1-i2).astype('int16')/1000))
 
-def pyr_register(fixed_image, moving_image, levels=3, initial_shift=(0,0), diff_function=abs_diff, iterate=True, return_result = False):
+def pyr_register(fixed_image, moving_image, levels=3, initial_shift=(0,0), diff_function=abs_diff, brute = False, iterate = True, return_result = False):
     '''Register two images via downsampling, computing a shift, and refining on the original images.
 
     At each downsampling ("pyramid level"), the images are shrunk two-fold. The maximum shift
@@ -43,7 +43,9 @@ def pyr_register(fixed_image, moving_image, levels=3, initial_shift=(0,0), diff_
         pm.append(pyramid.pyr_down(pm[-1]))
     initial_shift = numpy.asarray(initial_shift) / 2**(levels - 1)
     for f, m in reversed(list(zip(pf, pm))):
-        if iterate:
+        if brute:
+            func = brute_register
+        elif iterate:
             func = iterate_register
         else:
             func = register
@@ -129,6 +131,20 @@ def register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, di
         return (result.x, result)
     else:
         return result.x
+        
+def brute_register(fixed_image, moving_image, initial_shift=(0,0), search_bounds = 5, diff_function = abs_diff, cache = None, return_result = False):
+    if cache is None:
+        cache = {}
+    args = fixed_image, moving_image, diff_function, cache
+    ranges = [initial_shift[0] + numpy.array([-search_bounds, search_bounds]), 
+        initial_shift[1] + numpy.array([-search_bounds, search_bounds])]
+    result = optimize.brute(compare_images, 
+        ranges, Ns= 2*search_bounds+1,
+        args = args, full_output = True, disp = return_result,finish = None)
+    if return_result:
+        return (result[0], result)
+    else:
+        return result[0]
 
 def compare_images(shift, fixed_image, moving_image, diff_function, cache=None):
     '''Return distance metric between two images after applying a shift.
