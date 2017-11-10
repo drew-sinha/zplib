@@ -12,9 +12,9 @@ def abs_diff(i1, i2):
 def square_diff(i1, i2):
     '''Return the squared differences between two images.'''
     return (i1 - i2)**2
-
+    
 def sigmoid_diff(i1,i2):
-    return 1/(1 + np.exp(-1*np.abs(i1-i2)))
+    return 1/(1 + np.exp(-1*np.abs(i1-i2).astype('int16')/1000))
 
 def pyr_register(fixed_image, moving_image, levels=3, initial_shift=(0,0), diff_function=abs_diff, iterate=True, return_result = False):
     '''Register two images via downsampling, computing a shift, and refining on the original images.
