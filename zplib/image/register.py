@@ -142,6 +142,8 @@ def brute_register(fixed_image, moving_image, initial_shift=(0,0), search_bounds
         ranges, Ns= 2*search_bounds+1,
         args = args, full_output = True, disp = return_result,finish = None)
     if return_result:
+        print(result[-1])
+        print('===============')
         return (result[0], result)
     else:
         return result[0]
