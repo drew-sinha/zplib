@@ -16,7 +16,7 @@ def square_diff(i1, i2):
 def sigmoid_diff(i1,i2):
     return 1/(1 + numpy.exp(-1*numpy.abs(i1-i2).astype('int16')/1000))
 
-def pyr_register(fixed_image, moving_image, levels=3, initial_shift=(0,0), diff_function=abs_diff, brute = False, iterate = True, return_result = False,**kws):
+def pyr_register(fixed_image, moving_image, levels=3, initial_shift=(0,0), diff_function=abs_diff, brute = False, iterate = True, return_result = False, ROI = None, **kws):
     '''Register two images via downsampling, computing a shift, and refining on the original images.
 
     At each downsampling ("pyramid level"), the images are shrunk two-fold. The maximum shift
@@ -30,19 +30,32 @@ def pyr_register(fixed_image, moving_image, levels=3, initial_shift=(0,0), diff_
         levels: number of levels of the pyramid (counting the original size)
         initial_shift: (x, y) shift to begin search at.
         diff_function: image-comparison metric: one of abs_diff or square_diff
-        iterate: if true, use iterate_register at each pyramid level (slower, but more accurate).
+        brute: if True, use brute_register at each pyramid level to brute force registration; takes precedent over the iterate keyword
+        iterate: if True, use iterate_register at each pyramid level (slower, but more accurate).
             If False, use register.
+        return_result: Flag for adding verbosity (printing and returning)
+        ROI: Optional mask delineating the region to compare between images.
+        **kws: Additional keywords to pass to the appropriate registration call.
     Returns: (x, y) shift.
 
     To apply the identified shift to the moving image, call e.g.:
         shifted = ndimage.shift(moving_image, shift, order=1)
     '''
-    pf, pm = [fixed_image], [moving_image]
+    
+    if ROI is None:
+        ROI = numpy.ones(fixed_image.shape)
+    elif not (numpy.isnan(ROI).any()):
+        ROI = ROI.astype('float32')
+        ROI[ROI==0] = numpy.nan  # This will force conservative treatment with downsampling
+    
+    pf, pm, pROI = [fixed_image], [moving_image], [ROI]
     for i in range(levels-1):
         pf.append(pyramid.pyr_down(pf[-1]))
         pm.append(pyramid.pyr_down(pm[-1]))
+        pROI.append(pyramid.pyr_down(pROI[-1]))
+        
     initial_shift = numpy.asarray(initial_shift) / 2**(levels - 1)
-    for f, m in reversed(list(zip(pf, pm))):
+    for f, m, r in reversed(list(zip(pf, pm, pROI))):
         if brute:
             func = brute_register
         elif iterate:
@@ -51,9 +64,9 @@ def pyr_register(fixed_image, moving_image, levels=3, initial_shift=(0,0), diff_
             func = register
         
         if return_result:
-            shift, result = func(f, m, initial_shift=initial_shift, diff_function=diff_function, return_result = return_result,**kws)
+            shift, result = func(f, m, initial_shift=initial_shift, diff_function=diff_function, return_result = return_result, ROI = r, **kws)
         else:
-            shift = func(f, m, initial_shift=initial_shift, diff_function=diff_function, return_result = return_result,**kws)
+            shift = func(f, m, initial_shift=initial_shift, diff_function=diff_function, return_result = return_result, ROI = r, **kws)
             
         initial_shift = shift * 2
     if return_result:
@@ -61,7 +74,7 @@ def pyr_register(fixed_image, moving_image, levels=3, initial_shift=(0,0), diff_
     else:
         return shift
 
-def iterate_register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, diff_function=abs_diff, max_iters=10, tol=0.5, eps=1, return_result = False, trim = False):
+def iterate_register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, diff_function=abs_diff, max_iters=10, tol=0.5, eps=1, return_result = False, trim = False, ROI = None):
     '''Register two images iteratively.
 
     The 'register()' function is repeatedly applied to find the best registration
@@ -83,7 +96,10 @@ def iterate_register(fixed_image, moving_image, initial_shift=(0,0), search_boun
         trim: Flag for trimming moving image to eliminate bias 
             introduced when losing different amounts of pixels 
             with different shifts.
-    Returns: (x, y) shift.
+        ROI: Optional mask delineating the region to compare between images.
+    Returns: 
+        (x, y) shift, if return_result is False.
+        Otherwise returns the tuple ((x, y) shift, optimization result)
 
     To apply the identified shift to the moving image, call e.g.:
         shifted = ndimage.shift(moving_image, shift, order=1)
@@ -92,9 +108,9 @@ def iterate_register(fixed_image, moving_image, initial_shift=(0,0), search_boun
     
     for i in range(max_iters):
         if return_result:
-            shift, result = register(fixed_image, moving_image, initial_shift, search_bounds, diff_function, tol=tol, eps=eps, cache=cache, return_result = return_result)
+            shift, result = register(fixed_image, moving_image, initial_shift, search_bounds, diff_function, tol=tol, eps=eps, cache=cache, return_result = return_result, ROI = ROI)
         else:
-            shift = register(fixed_image, moving_image, initial_shift, search_bounds, diff_function, tol=tol, eps=eps, cache=cache, return_result = return_result)
+            shift = register(fixed_image, moving_image, initial_shift, search_bounds, diff_function, tol=tol, eps=eps, cache=cache, return_result = return_result, ROI = ROI)
         shift = numpy.round(shift, 2)
         if numpy.abs(shift - initial_shift).max() < tol:
             break
@@ -106,7 +122,7 @@ def iterate_register(fixed_image, moving_image, initial_shift=(0,0), search_boun
     else:
         return shift
 
-def register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, diff_function=abs_diff, tol=0.5, eps=1, cache=None, return_result = False):
+def register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, diff_function=abs_diff, tol=0.5, eps=1, cache=None, return_result = False, trim = False, ROI = None):
     '''Register two images by numerical optimization.
 
     Parameters:
@@ -124,7 +140,10 @@ def register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, di
         trim: Flag for trimming moving image to eliminate bias 
             introduced when losing different amounts of pixels 
             with different shifts.
-    Returns: (x, y) shift.
+        ROI: Optional mask delineating the region to compare between images.
+    Returns: 
+        (x, y) shift, if return_result is False.
+        Otherwise returns the tuple ((x, y) shift, optimization result)
 
     To apply the identified shift to the moving image, call e.g.:
         shifted = ndimage.shift(moving_image, shift, order=1)
@@ -137,6 +156,18 @@ def register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, di
         moving_image[-search_bounds:,:] = numpy.nan
         moving_image[:,:search_bounds] = numpy.nan
         moving_image[:,-search_bounds:] = numpy.nan
+    
+    if ROI is not None:
+        ROI[ROI==0] = numpy.nan
+        ROI_shifts = numpy.stack((
+            ndimage.shift(ROI, [initial_shift[0] + search_bounds,0], output = numpy.float32, cval = numpy.nan,order=1),
+            ndimage.shift(ROI, [initial_shift[0] - search_bounds,0], output = numpy.float32, cval = numpy.nan,order=1),
+            ndimage.shift(ROI, [0, initial_shift[1] + search_bounds], output = numpy.float32, cval = numpy.nan,order=1),
+            ndimage.shift(ROI, [0, initial_shift[1] - search_bounds], output = numpy.float32, cval = numpy.nan,order=1)))
+        
+        ROI_trim = numpy.prod(ROI_shifts, axis = 0)
+        moving_image = moving_image * ROI_trim
+    
     args = fixed_image, moving_image, diff_function, cache
     bounds = numpy.array([-search_bounds, search_bounds]) + initial_shift
     bounds = [bounds, bounds] # one for x and one for y
@@ -146,17 +177,62 @@ def register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, di
     else:
         return result.x
         
-def brute_register(fixed_image, moving_image, initial_shift=(0,0), search_bounds = 5, diff_function = abs_diff, cache = None, return_result = False, trim = False):
+def brute_register(fixed_image, moving_image, initial_shift=(0,0), search_bounds = 5, diff_function = abs_diff, cache = None, return_result = False, trim = False, ROI = None):
+    '''Register two images by brute-force over a search grid.
+
+    Parameters:
+        fixed_image: image for comparison
+        moving_image: image that will be shifted to match the fixed_image
+        initial_shift: (x, y) shift to begin search at.
+        search_bounds: largest distance from initial_shift to examine.
+        diff_function: image-comparison metric: one of abs_diff or square_diff
+        tol: if the shift changes by less than this amount in x and y, then
+            iteration will be ceased.
+        eps: the comparison metric's gradients are estimated by finite differences
+            with eps-sized offsets. For most images, values around 1 work well.
+        cache: used to cache results for given shift values between runs
+            (useful if this function will be called repeatedly).
+        trim: Flag for trimming moving image to eliminate bias 
+            introduced when losing different amounts of pixels 
+            with different shifts.
+        ROI: Optional mask delineating the region to compare between images.
+    Returns: 
+        (x, y) shift, if return_result is False.
+        Otherwise returns the tuple ((x, y) shift, optimization result)
+
+    To apply the identified shift to the moving image, call e.g.:
+        shifted = ndimage.shift(moving_image, shift, order=1)
+    '''
+    
+    
     if cache is None:
         cache = {}
-    args = fixed_image, moving_image, diff_function, cache
+    if ROI is None:
+        ROI = numpy.ones(fixed_image.shape)
+        
     ranges = [initial_shift[0] + numpy.array([-search_bounds, search_bounds]), 
         initial_shift[1] + numpy.array([-search_bounds, search_bounds])]
+    
     if trim:
         moving_image[:search_bounds,:] = numpy.nan
         moving_image[-search_bounds:,:] = numpy.nan
         moving_image[:,:search_bounds] = numpy.nan
         moving_image[:,-search_bounds:] = numpy.nan
+    
+    if ROI is not None:
+        ROI[ROI==0] = numpy.nan
+        
+        # Build the set of maximal shifts of the ROI to trim appropriately.
+        ROI_shifts = numpy.stack((
+            ndimage.shift(ROI, [initial_shift[0] + search_bounds,0], output = numpy.float32, cval = numpy.nan,order=1),
+            ndimage.shift(ROI, [initial_shift[0] - search_bounds,0], output = numpy.float32, cval = numpy.nan,order=1),
+            ndimage.shift(ROI, [0, initial_shift[1] + search_bounds], output = numpy.float32, cval = numpy.nan,order=1),
+            ndimage.shift(ROI, [0, initial_shift[1] - search_bounds], output = numpy.float32, cval = numpy.nan,order=1)))
+        
+        ROI_trim = numpy.prod(ROI_shifts, axis = 0)
+        moving_image = moving_image * ROI_trim
+        
+    args = fixed_image, moving_image, diff_function, cache
     result = optimize.brute(compare_images, 
         ranges, Ns= 2*search_bounds+1,
         args = args, full_output = True, disp = return_result,finish = None)
