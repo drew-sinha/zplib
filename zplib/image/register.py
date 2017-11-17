@@ -98,7 +98,7 @@ def register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, di
         mask_trim = numpy.prod(mask_shifts, axis = 0)
         moving_image = moving_image * mask_trim
     
-    args = fixed_image, moving_image, diff_function, cache
+    args = fixed_image, moving_image, diff_function, cache, diff_mode
     bounds = numpy.array([-search_bounds, search_bounds]) + initial_shift
     bounds = [bounds, bounds] # one for x and one for y
     result = optimize.minimize(compare_images, initial_shift, args=args, method='TNC', options={'xtol':tol, 'eps':eps}, bounds=bounds)
