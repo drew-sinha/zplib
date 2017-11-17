@@ -16,7 +16,7 @@ def square_diff(i1, i2):
 def sigmoid_diff(i1,i2):
     return 1/(1 + numpy.exp(-1*numpy.abs(i1.astype('int32')-i2.astype('int32')).astype('uint16')/1000))
 
-def iterate_register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, diff_function=abs_diff, max_iters=10, tol=0.5, eps=1, traceback=None, trim = False, mask = None,diff_mode='sum'):
+def iterate_register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, diff_function=abs_diff, max_iters=10, tol=0.5, eps=1, traceback=None, mask=None):
     '''Register two images iteratively.
 
     The 'register()' function is repeatedly applied to find the best registration
@@ -49,14 +49,14 @@ def iterate_register(fixed_image, moving_image, initial_shift=(0,0), search_boun
     cache = {}
     
     for i in range(max_iters):
-        shift = register(fixed_image, moving_image, initial_shift, search_bounds, diff_function, tol=tol, eps=eps, cache=cache, traceback = traceback, mask = mask, diff_mode = diff_mode)
+        shift = register(fixed_image, moving_image, initial_shift, search_bounds, diff_function, tol=tol, eps=eps, cache=cache, traceback = traceback, mask = mask)
         shift = numpy.round(shift, 2)
         if numpy.abs(shift - initial_shift).max() < tol:
             break
         initial_shift = shift
     return shift
 
-def register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, diff_function=abs_diff, tol=0.5, eps=1, cache=None, traceback=None, trim=False, mask=None,diff_mode='sum'):
+def register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, diff_function=abs_diff, tol=0.5, eps=1, cache=None, traceback=None, mask=None):
     '''Register two images by numerical optimization.
 
     Parameters:
@@ -84,9 +84,6 @@ def register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, di
     '''
     if cache is None:
         cache = {}
-        
-    if trim:
-        moving_image = trim_image(moving_image, search_bounds)
     
     if mask is not None:
         mask_shifts = numpy.stack((
@@ -98,7 +95,7 @@ def register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, di
         mask_trim = numpy.prod(mask_shifts, axis = 0)
         moving_image = moving_image * mask_trim
     
-    args = fixed_image, moving_image, diff_function, cache, diff_mode
+    args = fixed_image, moving_image, diff_function, cache
     bounds = numpy.array([-search_bounds, search_bounds]) + initial_shift
     bounds = [bounds, bounds] # one for x and one for y
     result = optimize.minimize(compare_images, initial_shift, args=args, method='TNC', options={'xtol':tol, 'eps':eps}, bounds=bounds)
@@ -108,7 +105,7 @@ def register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, di
     
     return result.x
         
-def brute_register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, diff_function=abs_diff, cache=None, traceback=None, trim=False, mask=None, diff_mode='sum'):
+def brute_register(fixed_image, moving_image, initial_shift=(0,0), search_bounds=5, diff_function=abs_diff, cache=None, traceback=None, mask=None):
     '''Register two images by brute-force over a search grid.
 
     Parameters:
@@ -143,9 +140,6 @@ def brute_register(fixed_image, moving_image, initial_shift=(0,0), search_bounds
     ranges = [initial_shift[0] + numpy.array([-search_bounds, search_bounds]), 
         initial_shift[1] + numpy.array([-search_bounds, search_bounds])]
     
-    if trim:
-        moving_image = trim_image(moving_image, search_bounds)
-    
     if mask is not None:
         # Build the set of maximal shifts of the mask to trim appropriately.
         mask_shifts = numpy.stack((
@@ -157,10 +151,7 @@ def brute_register(fixed_image, moving_image, initial_shift=(0,0), search_bounds
         mask_trim = numpy.prod(mask_shifts, axis = 0)
         moving_image = moving_image * mask_trim
         
-    args = fixed_image, moving_image, diff_function, cache, diff_mode
-    #~ result = optimize.brute(compare_images, 
-        #~ ranges, Ns= 2*search_bounds+1,
-        #~ args = args, full_output = True, disp = return_result,finish = None)
+    args = fixed_image, moving_image, diff_function, cache
     result = optimize.brute(compare_images, 
         ranges, Ns= 2*search_bounds+1,
         args = args, full_output = True,finish = None)
@@ -170,7 +161,7 @@ def brute_register(fixed_image, moving_image, initial_shift=(0,0), search_bounds
     
     return result[0]
 
-def compare_images(shift, fixed_image, moving_image, diff_function, cache=None, diff_mode = 'sum'):
+def compare_images(shift, fixed_image, moving_image, diff_function, cache=None):
     '''Return distance metric between two images after applying a shift.
 
     Parameters:
@@ -189,22 +180,11 @@ def compare_images(shift, fixed_image, moving_image, diff_function, cache=None, 
         return cache[hash_shift]
     moving_image = ndimage.shift(moving_image, shift, output=numpy.float32, cval=numpy.nan, order=1)
     diff = diff_function(fixed_image, moving_image)
-    if diff_mode == 'sum':
-        result = diff[numpy.isfinite(diff)].sum()
-    elif diff_mode == 'mean':
-        result = numpy.nanmean(diff)
+    result = numpy.nanmean(diff)
         
     if cache is not None:
         cache[hash_shift] = result
     return result
-
-def trim_image(image, trim_width):
-    image = image.copy()
-    image[:trim_width,:] = numpy.nan
-    image[-trim_width:,:] = numpy.nan
-    image[:,:trim_width] = numpy.nan
-    image[:,-trim_width:] = numpy.nan
-    return image
 
 def pyr_register(fixed_image, moving_image, levels=3, initial_shift=(0,0), diff_function=abs_diff, register_func=iterate_register, traceback=None, mask=None, reliability_thr=1, **kws):
     '''Register two images via downsampling, computing a shift, and refining on the original images.
